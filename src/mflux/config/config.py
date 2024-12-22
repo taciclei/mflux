@@ -39,3 +39,37 @@ class ConfigControlnet(Config):
     ):
         super().__init__(num_inference_steps=num_inference_steps, width=width, height=height, guidance=guidance)
         self.controlnet_strength = controlnet_strength
+
+
+class DreamBoothConfig(Config):
+    def __init__(
+        self,
+        model_name: str,
+        instance_data_dir: str,
+        output_dir: str,
+        instance_prompt: str,
+        train_batch_size: int = 1,
+        gradient_accumulation_steps: int = 1,
+        learning_rate: float = 5e-6,
+        lr_scheduler: str = "constant",
+        lr_warmup_steps: int = 0,
+        max_train_steps: int = 2,
+        guidance: float = 8.0,
+        height: int = 512,
+        width: int = 512,
+    ):
+        super().__init__(guidance=guidance, height=height, width=width)
+        self.model_name = model_name
+        self.instance_data_dir = instance_data_dir
+        self.output_dir = output_dir
+        self.instance_prompt = instance_prompt
+        self.train_batch_size = train_batch_size
+        self.gradient_accumulation_steps = gradient_accumulation_steps
+        self.learning_rate = learning_rate
+        self.lr_scheduler = lr_scheduler
+        self.lr_warmup_steps = lr_warmup_steps
+        self.max_train_steps = max_train_steps
+
+    @property
+    def num_train_steps(self) -> int:
+        return self.max_train_steps

@@ -5,27 +5,47 @@ from mlx import nn
 class EmbedND(nn.Module):
     def __init__(self):
         super().__init__()
-        self.dim = 3072
-        self.theta = 10000
-        self.axes_dim = [16, 56, 56]
+        self.dim = 128  # Dimension of embeddings (same as head_dimension in JointAttention)
+        self.theta = 10000  # Base for frequencies
+        self.num_heads = 24  # Number of attention heads
+        self.max_position_embeddings = 1024  # Maximum sequence length
 
-    def forward(self, ids: mx.array) -> mx.array:
-        emb = mx.concatenate(
-            [EmbedND.rope(ids[..., i], self.axes_dim[i], self.theta) for i in range(3)],
-            axis=-3,
+    def forward(self, position_ids: mx.array) -> mx.array:
+        # position_ids shape: (batch_size, seq_length)
+        seq_length = position_ids.shape[1]
+        encoder_seq_length = 1  # Length of encoder sequence
+        total_seq_length = seq_length + encoder_seq_length  # Total sequence length after concatenation
+
+        # Generate frequencies for each dimension
+        freqs = EmbedND.precompute_freqs_cis(
+            dim=self.dim // 2,  # Half dimension for complex numbers
+            theta=self.theta,
+            seq_length=total_seq_length
         )
-        return mx.expand_dims(emb, axis=1)
+
+        # Reshape for attention heads
+        # From (total_seq_length, dim//2, 2) to (1, num_heads, total_seq_length, dim//2, 2)
+        freqs = mx.expand_dims(freqs, axis=0)  # Add batch dimension
+        freqs = mx.expand_dims(freqs, axis=1)  # Add head dimension
+        freqs = mx.broadcast_to(freqs, (1, self.num_heads, total_seq_length, self.dim // 2, 2))
+
+        return freqs
 
     @staticmethod
-    def rope(pos: mx.array, dim: int, theta: float) -> mx.array:
-        scale = mx.arange(0, dim, 2, dtype=mx.float32) / dim
-        omega = 1.0 / (theta**scale)
-        batch_size, seq_length = pos.shape
-        pos_expanded = mx.expand_dims(pos, axis=-1)
-        omega_expanded = mx.expand_dims(omega, axis=0)
-        out = pos_expanded * omega_expanded
-        cos_out = mx.cos(out)
-        sin_out = mx.sin(out)
-        stacked_out = mx.stack([cos_out, -sin_out, sin_out, cos_out], axis=-1)
-        out = mx.reshape(stacked_out, (batch_size, -1, dim // 2, 2, 2))
-        return out
+    def precompute_freqs_cis(dim: int, theta: float, seq_length: int) -> mx.array:
+        # Generate frequency bands
+        freqs = mx.exp(
+            -mx.arange(0, dim, dtype=mx.float32) * (mx.log(theta) / dim)
+        )
+
+        # Generate positions
+        positions = mx.arange(seq_length, dtype=mx.float32)
+
+        # Compute angles
+        angles = mx.outer(positions, freqs)
+
+        # Return complex components: (seq_length, dim, 2)
+        return mx.stack(
+            [mx.cos(angles), mx.sin(angles)],
+            axis=-1
+        )

@@ -55,6 +55,7 @@ homepage = "https://github.com/filipstrand/mflux"
 mflux-generate = "mflux.generate:main"
 mflux-save = "mflux.save:main"
 mflux-generate-controlnet = "mflux.generate_controlnet:main"
+mflux-train-dreambooth = "mflux.dreambooth_training.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,35 +1,46 @@
+# src/mflux/models/transformer/time_text_embed.py
+"""Time and text embedding implementation."""
+
 import math
 
 import mlx.core as mx
-from mlx import nn
+import mlx.nn as nn
 
-from mflux.config.config import Config
 from mflux.config.model_config import ModelConfig
-from mflux.models.transformer.guidance_embedder import GuidanceEmbedder
 from mflux.models.transformer.text_embedder import TextEmbedder
-from mflux.models.transformer.timestep_embedder import TimestepEmbedder
 
 
 class TimeTextEmbed(nn.Module):
-    def __init__(self, model_config: ModelConfig):
-        super().__init__()
-        self.text_embedder = TextEmbedder()
-        self.guidance_embedder = GuidanceEmbedder() if model_config == ModelConfig.FLUX1_DEV else None
-        self.timestep_embedder = TimestepEmbedder()
+    """Time and text embedding module."""
 
-    def forward(
-        self,
-        time_step: mx.array,
-        pooled_projection: mx.array,
-        guidance: mx.array,
-    ) -> mx.array:
-        time_steps_proj = self._time_proj(time_step)
-        time_steps_emb = self.timestep_embedder.forward(time_steps_proj)
-        if self.guidance_embedder is not None:
-            time_steps_emb += self.guidance_embedder.forward(self._time_proj(guidance))
+    def __init__(self, config: ModelConfig, embedding_dim: int = 3072):
+        super().__init__()
+        self.config = config
+        self.hidden_size = config.hidden_size
+
+        # Time embedding
+        self.time_embed = nn.Sequential(
+            nn.Linear(1, self.hidden_size),
+            nn.SiLU(),
+            nn.Linear(self.hidden_size, self.hidden_size),
+        )
+
+        # Text projection
+        self.text_proj = nn.Linear(self.hidden_size, self.hidden_size)
+
+        self.text_embedder = TextEmbedder(embedding_dim)
+
+    def forward(self, time_step, pooled_prompt_embeds, guidance):
+        time_embeddings = self.time_embed(time_step)
+
+        pooled_projection = self.text_proj(pooled_prompt_embeds)
+
         pooled_projections = self.text_embedder.forward(pooled_projection)
-        conditioning = time_steps_emb + pooled_projections
-        return conditioning.astype(Config.precision)
+
+        if pooled_projections.shape != time_embeddings.shape:
+            pooled_projections = mx.reshape(pooled_projections, time_embeddings.shape)
+
+        return time_embeddings + guidance * pooled_projections
 
     @staticmethod
     def _time_proj(time_steps: mx.array) -> mx.array:

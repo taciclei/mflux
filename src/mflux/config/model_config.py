@@ -1,27 +1,60 @@
-from enum import Enum
+"""Model configuration."""
+
+from dataclasses import dataclass
 
 
-class ModelConfig(Enum):
-    FLUX1_DEV = ("black-forest-labs/FLUX.1-dev", "dev", 1000, 512)
-    FLUX1_SCHNELL = ("black-forest-labs/FLUX.1-schnell", "schnell", 1000, 256)
+@dataclass
+class ModelConfig:
+    """Model configuration class."""
 
-    def __init__(
-        self,
-        model_name: str,
-        alias: str,
-        num_train_steps: int,
-        max_sequence_length: int,
-    ):
-        self.alias = alias
-        self.model_name = model_name
-        self.num_train_steps = num_train_steps
-        self.max_sequence_length = max_sequence_length
+    model_name: str
+    alias: str
+    num_train_steps: int
+    max_sequence_length: int
+    height: int
+    width: int
+    hidden_size: int = 768
+    num_attention_heads: int = 12
+    num_hidden_layers: int = 12
+    intermediate_size: int = 3072
+    hidden_act: str = "gelu"
+    hidden_dropout_prob: float = 0.1
+    attention_probs_dropout_prob: float = 0.1
+    max_position_embeddings: int = 512
+    type_vocab_size: int = 2
+    initializer_range: float = 0.02
+    layer_norm_eps: float = 1e-12
+    patch_size: int = 8
+    in_channels: int = 4
+    out_channels: int = 4
 
     @staticmethod
     def from_alias(alias: str) -> "ModelConfig":
-        try:
-            for model in ModelConfig:
-                if model.alias == alias:
-                    return model
-        except KeyError:
-            raise ValueError(f"'{alias}' is not a valid model")
+        """Create model config from alias.
+
+        Args:
+            alias: Model alias
+
+        Returns:
+            Model config
+        """
+        if alias.lower() == "schnell":
+            return ModelConfig(
+                model_name="black-forest-labs/FLUX.1-schnell",
+                alias="schnell",
+                num_train_steps=1000,
+                max_sequence_length=256,
+                height=64,
+                width=64,
+            )
+        elif alias.lower() == "dev":
+            return ModelConfig(
+                model_name="black-forest-labs/FLUX.1-dev",
+                alias="dev",
+                num_train_steps=1000,
+                max_sequence_length=512,
+                height=64,
+                width=64,
+            )
+        else:
+            raise ValueError(f"Unknown model alias: {alias}")

@@ -48,8 +48,24 @@ class SingleBlockAttention(nn.Module):
 
     @staticmethod
     def apply_rope(xq: mx.array, xk: mx.array, freqs_cis: mx.array):
-        xq_ = xq.astype(mx.float32).reshape(*xq.shape[:-1], -1, 1, 2)
-        xk_ = xk.astype(mx.float32).reshape(*xk.shape[:-1], -1, 1, 2)
-        xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
-        xk_out = freqs_cis[..., 0] * xk_[..., 0] + freqs_cis[..., 1] * xk_[..., 1]
-        return xq_out.reshape(*xq.shape).astype(mx.float32), xk_out.reshape(*xk.shape).astype(mx.float32)
+        # Split last dimension into real and imaginary parts
+        # Original shape: (batch, num_heads, seq_len, head_dim)
+        # After reshape: (batch, num_heads, seq_len, head_dim//2, 2)
+        xq_ = xq.astype(mx.float32).reshape(*xq.shape[:-1], xq.shape[-1] // 2, 2)
+        xk_ = xk.astype(mx.float32).reshape(*xk.shape[:-1], xk.shape[-1] // 2, 2)
+
+        # Apply rotary embeddings
+        real_part = freqs_cis[..., 0] * xq_[..., 0] - freqs_cis[..., 1] * xq_[..., 1]
+        imag_part = freqs_cis[..., 0] * xq_[..., 1] + freqs_cis[..., 1] * xq_[..., 0]
+        xq_out = mx.stack([real_part, imag_part], axis=-1)
+
+        real_part = freqs_cis[..., 0] * xk_[..., 0] - freqs_cis[..., 1] * xk_[..., 1]
+        imag_part = freqs_cis[..., 0] * xk_[..., 1] + freqs_cis[..., 1] * xk_[..., 0]
+        xk_out = mx.stack([real_part, imag_part], axis=-1)
+
+        # Reshape back to original dimensions
+        # From (batch, num_heads, seq_len, head_dim//2, 2) to (batch, num_heads, seq_len, head_dim)
+        return (
+            mx.reshape(xq_out, xq.shape).astype(mx.float32),
+            mx.reshape(xk_out, xk.shape).astype(mx.float32)
+        )
