@@ -27,6 +27,4 @@ class RuntimeConfig:
         self.learning_rate = mx.array(self.learning_rate, dtype=mx.float32)
 
         # Create timestep map
-        self.timestep_map = mx.array(
-            mx.linspace(0.00085**0.5, 0.012**0.5, 1000, dtype=mx.float32) ** 2
-        )
+        self.timestep_map = mx.array(mx.linspace(0.00085**0.5, 0.012**0.5, 1000, dtype=mx.float32) ** 2)

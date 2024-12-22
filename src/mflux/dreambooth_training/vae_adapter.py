@@ -5,7 +5,6 @@ This module provides adapter classes to make different VAE implementations
 compatible with the DreamBooth training pipeline.
 """
 
-
 import mlx.core as mx
 import mlx.nn as nn
 

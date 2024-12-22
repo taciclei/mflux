@@ -13,22 +13,20 @@ logger.setLevel(logging.INFO)
 # Only add handler if not already added to avoid duplicate logs
 if not logger.handlers:
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%H:%M:%S'
-    ))
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"))
     logger.addHandler(handler)
 
-def log_tensor_info(name: str, tensor: mx.array, level: str = 'debug'):
+
+def log_tensor_info(name: str, tensor: mx.array, level: str = "debug"):
     """Log tensor information at specified level."""
     msg = f"{name} shape: {tensor.shape}"
-    if level == 'debug':
+    if level == "debug":
         logger.debug(msg)
-    elif level == 'info':
+    elif level == "info":
         logger.info(msg)
-    elif level == 'warning':
+    elif level == "warning":
         logger.warning(msg)
-    elif level == 'error':
+    elif level == "error":
         logger.error(msg)
 
 
@@ -79,7 +77,7 @@ class Encoder(nn.Module):
         self.proj_logvar = nn.Conv2d(512, latent_channels, kernel_size=1)
 
     def __call__(self, x: mx.array) -> Tuple[mx.array, mx.array]:
-        log_tensor_info("Encoder input", x, level='debug')
+        log_tensor_info("Encoder input", x, level="debug")
 
         x = self.conv_in(x)
         x = mx.maximum(x * 0.2, x)
@@ -92,8 +90,8 @@ class Encoder(nn.Module):
         mu = self.proj_mu(x)
         logvar = self.proj_logvar(x)
 
-        log_tensor_info("Encoder mu", mu, level='debug')
-        log_tensor_info("Encoder logvar", logvar, level='debug')
+        log_tensor_info("Encoder mu", mu, level="debug")
+        log_tensor_info("Encoder logvar", logvar, level="debug")
 
         return mu, logvar
 
@@ -125,7 +123,7 @@ class Decoder(nn.Module):
         self.conv_out = nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1)
 
     def __call__(self, x: mx.array) -> mx.array:
-        log_tensor_info("Decoder input", x, level='debug')
+        log_tensor_info("Decoder input", x, level="debug")
 
         x = self.conv_in(x)
         x = mx.maximum(x * 0.2, x)
@@ -138,7 +136,7 @@ class Decoder(nn.Module):
         x = self.conv_out(x)
         x = mx.tanh(x)
 
-        log_tensor_info("Decoder output", x, level='debug')
+        log_tensor_info("Decoder output", x, level="debug")
         return x
 
 
@@ -158,7 +156,7 @@ class VAE(nn.Module):
 
     def encode(self, x: mx.array) -> mx.array:
         """Encode input to latent space."""
-        log_tensor_info("VAE input", x, level='debug')
+        log_tensor_info("VAE input", x, level="debug")
 
         # Normalize and convert format
         x = x / 127.5 - 1.0
@@ -171,7 +169,7 @@ class VAE(nn.Module):
         # Convert back
         z = mx.transpose(z, [0, 3, 1, 2])
 
-        log_tensor_info("VAE latent", z, level='debug')
+        log_tensor_info("VAE latent", z, level="debug")
         return z
 
     def decode(self, z: mx.array) -> mx.array:
@@ -196,8 +194,4 @@ class VAE(nn.Module):
         recon = mx.transpose(recon, [0, 3, 1, 2])
         recon = (recon + 1.0) * 127.5
 
-        return {
-            'reconstruction': recon,
-            'mu': mu,
-            'logvar': logvar
-        }
+        return {"reconstruction": recon, "mu": mu, "logvar": logvar}

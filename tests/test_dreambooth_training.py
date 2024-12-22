@@ -5,7 +5,6 @@ This module contains tests for the DreamBooth training pipeline, including
 model initialization, training loop, and output validation.
 """
 
-import os
 import shutil
 from pathlib import Path
 
@@ -32,22 +31,18 @@ def test_dirs():
     """
     instance_dir = Path("./test_instance_data")
     output_dir = Path("./test_output")
-    
+
     # Create directories
     instance_dir.mkdir(exist_ok=True)
     output_dir.mkdir(exist_ok=True)
-    
+
     # Create test image
     image = np.random.normal(0, 1, (512, 512, 3)).astype(np.float32)
     image_path = instance_dir / "test_image.npy"
     np.save(str(image_path), image)
-    
-    yield {
-        "instance_dir": instance_dir,
-        "output_dir": output_dir,
-        "image_path": image_path
-    }
-    
+
+    yield {"instance_dir": instance_dir, "output_dir": output_dir, "image_path": image_path}
+
     # Cleanup
     if instance_dir.exists():
         shutil.rmtree(instance_dir)
@@ -82,7 +77,7 @@ def create_test_dataset(batch_size: int = 1) -> list:
     sequence_length = 77  # Standard length for text tokens
     channels = 4
     height = width = 32  # Reduced size for testing
-    
+
     image = mx.random.normal((batch_size, channels, height, width))
     prompt_embeds = mx.random.normal((batch_size, sequence_length, hidden_size))
     pooled_prompt_embeds = mx.random.normal((batch_size, hidden_size))
@@ -92,7 +87,7 @@ def create_test_dataset(batch_size: int = 1) -> list:
 def test_model_initialization(model_fixtures):
     """Test model component initialization."""
     transformer, text_encoder, vae, model = model_fixtures
-    
+
     assert isinstance(transformer, Transformer), "Transformer initialization failed"
     assert isinstance(text_encoder, T5Encoder), "Text encoder initialization failed"
     assert isinstance(vae, VAE), "VAE initialization failed"
@@ -112,9 +107,9 @@ def test_training_config(test_dirs):
         lr_scheduler="cosine",
         lr_warmup_steps=100,
         max_train_steps=1000,
-        guidance=7.5
+        guidance=7.5,
     )
-    
+
     assert config.train_batch_size == 1, "Incorrect batch size"
     assert config.learning_rate == 5e-6, "Incorrect learning rate"
     assert config.guidance == 7.5, "Incorrect guidance value"
@@ -124,7 +119,7 @@ def test_training_config(test_dirs):
 def test_training_loop(test_dirs, model_fixtures):
     """Test the complete training loop."""
     _, _, _, model = model_fixtures
-    
+
     # Setup configuration
     config = DreamBoothTrainingConfig(
         model_config=ModelConfig.FLUX1_SCHNELL,
@@ -137,17 +132,17 @@ def test_training_loop(test_dirs, model_fixtures):
         lr_scheduler="cosine",
         lr_warmup_steps=100,
         max_train_steps=1000,
-        guidance=7.5
+        guidance=7.5,
     )
     runtime_config = RuntimeConfig(config=config, model_config=ModelConfig.FLUX1_SCHNELL)
-    
+
     # Create trainer
     dataset = create_test_dataset()
     trainer = DreamBoothTrainer(config=config, model=model, dataset=dataset)
-    
+
     # Run training
     trainer.train(num_steps=2, runtime_config=runtime_config)
-    
+
     # Verify outputs
     assert test_dirs["output_dir"].exists(), "Output directory not created"
     assert any(test_dirs["output_dir"].iterdir()), "No output files generated"
@@ -156,19 +151,19 @@ def test_training_loop(test_dirs, model_fixtures):
 def test_model_inference(model_fixtures):
     """Test model inference with dummy inputs."""
     _, _, _, model = model_fixtures
-    
+
     # Setup inputs
     batch_size = 1
     hidden_size = 64
     sequence_length = 77  # Standard length for text tokens
     channels = 4
     height = width = 32  # Reduced size for testing
-    
+
     test_input = mx.random.normal((batch_size, 24, height, width))
     timestep = mx.array([0], dtype=mx.float32)
     prompt_embeds = mx.random.normal((batch_size, sequence_length, hidden_size))
     pooled_prompt_embeds = mx.random.normal((batch_size, hidden_size))
-    
+
     # Run inference
     config = RuntimeConfig(
         config=DreamBoothTrainingConfig(
@@ -182,13 +177,13 @@ def test_model_inference(model_fixtures):
             lr_scheduler="cosine",
             lr_warmup_steps=100,
             max_train_steps=1000,
-            guidance=7.5
+            guidance=7.5,
         ),
-        model_config=ModelConfig.FLUX1_SCHNELL
+        model_config=ModelConfig.FLUX1_SCHNELL,
     )
-    
+
     output = model(timestep, prompt_embeds, pooled_prompt_embeds, test_input, config)
-    
+
     # Verify output shape
     expected_shape = (batch_size, 24, height, width)
     assert output.shape == expected_shape, f"Expected shape {expected_shape}, got {output.shape}"

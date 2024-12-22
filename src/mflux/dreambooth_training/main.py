@@ -38,9 +38,7 @@ def main():
         required=True,
         help="Prompt to use for instance images",
     )
-    parser.add_argument(
-        "--train_batch_size", type=int, default=1, help="Batch size for training"
-    )
+    parser.add_argument("--train_batch_size", type=int, default=1, help="Batch size for training")
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,

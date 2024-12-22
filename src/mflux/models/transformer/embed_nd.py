@@ -20,7 +20,7 @@ class EmbedND(nn.Module):
         freqs = EmbedND.precompute_freqs_cis(
             dim=self.dim // 2,  # Half dimension for complex numbers
             theta=self.theta,
-            seq_length=total_seq_length
+            seq_length=total_seq_length,
         )
 
         # Reshape for attention heads
@@ -34,9 +34,7 @@ class EmbedND(nn.Module):
     @staticmethod
     def precompute_freqs_cis(dim: int, theta: float, seq_length: int) -> mx.array:
         # Generate frequency bands
-        freqs = mx.exp(
-            -mx.arange(0, dim, dtype=mx.float32) * (mx.log(theta) / dim)
-        )
+        freqs = mx.exp(-mx.arange(0, dim, dtype=mx.float32) * (mx.log(theta) / dim))
 
         # Generate positions
         positions = mx.arange(seq_length, dtype=mx.float32)
@@ -45,7 +43,4 @@ class EmbedND(nn.Module):
         angles = mx.outer(positions, freqs)
 
         # Return complex components: (seq_length, dim, 2)
-        return mx.stack(
-            [mx.cos(angles), mx.sin(angles)],
-            axis=-1
-        )
+        return mx.stack([mx.cos(angles), mx.sin(angles)], axis=-1)

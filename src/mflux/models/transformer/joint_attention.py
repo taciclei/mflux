@@ -100,29 +100,14 @@ class JointAttention(nn.Module):
         # Apply rotary embeddings
         # freqs_cis shape: (1, num_heads, seq_len, dim//2, 2)
         # xq_ shape: (batch, num_heads, seq_len, dim//2, 2)
-        real_part = (
-            freqs_cis[..., 0] * xq_[..., 0] -
-            freqs_cis[..., 1] * xq_[..., 1]
-        )
-        imag_part = (
-            freqs_cis[..., 0] * xq_[..., 1] +
-            freqs_cis[..., 1] * xq_[..., 0]
-        )
+        real_part = freqs_cis[..., 0] * xq_[..., 0] - freqs_cis[..., 1] * xq_[..., 1]
+        imag_part = freqs_cis[..., 0] * xq_[..., 1] + freqs_cis[..., 1] * xq_[..., 0]
         xq_out = mx.stack([real_part, imag_part], axis=-1)
 
-        real_part = (
-            freqs_cis[..., 0] * xk_[..., 0] -
-            freqs_cis[..., 1] * xk_[..., 1]
-        )
-        imag_part = (
-            freqs_cis[..., 0] * xk_[..., 1] +
-            freqs_cis[..., 1] * xk_[..., 0]
-        )
+        real_part = freqs_cis[..., 0] * xk_[..., 0] - freqs_cis[..., 1] * xk_[..., 1]
+        imag_part = freqs_cis[..., 0] * xk_[..., 1] + freqs_cis[..., 1] * xk_[..., 0]
         xk_out = mx.stack([real_part, imag_part], axis=-1)
 
         # Reshape back to original dimensions
         # From (batch, num_heads, seq_len, head_dim//2, 2) to (batch, num_heads, seq_len, head_dim)
-        return (
-            mx.reshape(xq_out, xq.shape),
-            mx.reshape(xk_out, xk.shape)
-        )
+        return (mx.reshape(xq_out, xq.shape), mx.reshape(xk_out, xk.shape))

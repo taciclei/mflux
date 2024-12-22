@@ -65,7 +65,4 @@ class SingleBlockAttention(nn.Module):
 
         # Reshape back to original dimensions
         # From (batch, num_heads, seq_len, head_dim//2, 2) to (batch, num_heads, seq_len, head_dim)
-        return (
-            mx.reshape(xq_out, xq.shape).astype(mx.float32),
-            mx.reshape(xk_out, xk.shape).astype(mx.float32)
-        )
+        return (mx.reshape(xq_out, xq.shape).astype(mx.float32), mx.reshape(xk_out, xk.shape).astype(mx.float32))

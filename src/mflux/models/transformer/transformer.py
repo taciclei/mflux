@@ -30,10 +30,7 @@ class Transformer(nn.Module):
         )
 
         # Create transformer blocks
-        self.transformer_blocks = [
-            TransformerBlock(config)
-            for _ in range(config.num_hidden_layers)
-        ]
+        self.transformer_blocks = [TransformerBlock(config) for _ in range(config.num_hidden_layers)]
 
         # Create final layer norm
         self.ln = nn.LayerNorm(config.hidden_size)
@@ -110,7 +107,17 @@ class Transformer(nn.Module):
         x = self.out_proj(x)
 
         # Reshape back to image
-        x = mx.reshape(x, (batch_size, h_patches, w_patches, self.config.patch_size, self.config.patch_size, self.config.out_channels))
+        x = mx.reshape(
+            x,
+            (
+                batch_size,
+                h_patches,
+                w_patches,
+                self.config.patch_size,
+                self.config.patch_size,
+                self.config.out_channels,
+            ),
+        )
         x = mx.transpose(x, [0, 5, 1, 3, 2, 4])
         x = mx.reshape(x, (batch_size, self.config.out_channels, self.config.height, self.config.width))
         print(f"Transformer output shape: {x.shape}")
