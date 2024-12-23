@@ -10,11 +10,24 @@
 .venv
 *.png
 *.jpg
+*.jpeg
+*.gif
+*.bmp
 *.pyc
+*.pyo
+*.pyd
+*.so
+*.dylib
+*.dll
 *.safetensors
 *.json
+*.npy
+*.npz
 
 *.egg-info
+__pycache__/
+*.py[cod]
+*$py.class
 
 # build/ generated from 'pip install -e .' in developer mode
 build/
@@ -23,3 +36,10 @@ build/
 .fls
 .aux
 .log
+dist/
+
+# Training data and output directories
+taz76/
+dreambooth_output*/
+instance_images/
+training_data/
