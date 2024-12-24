@@ -166,11 +166,11 @@ class Flux:
             latents = batch.latents
             noise = batch.noise
             timesteps = batch.timesteps
-            
+
             # Vectorized loss function
             def loss_fn(params):
                 self.transformer.update(params)
-                
+
                 # Predict noise (automatically uses GPU)
                 noise_pred = self.transformer(
                     timesteps,
@@ -178,30 +178,30 @@ class Flux:
                     batch.pooled_prompt_embeds,
                     latents,
                 )
-                
+
                 if noise_pred is None:
-                    return mx.array(float('inf'), dtype=mx.float32)
-                
+                    return mx.array(float("inf"), dtype=mx.float32)
+
                 # Calculate MSE loss in a vectorized way
                 loss = mx.mean((noise_pred - noise) ** 2)
                 return loss
-            
+
             # Compile loss function for speed
             loss_fn = mx.compile(loss_fn)
-                
+
             # Calculate loss and gradients asynchronously
             loss, grads = mx.value_and_grad(loss_fn)(self.transformer.parameters())
-            
+
             # Update parameters with optimizer
             self.opt.update(self.transformer, grads)
-            
+
             # Evaluate pending calculations
             mx.eval(loss)
             mx.eval(self.transformer.parameters())
-            
+
             # Return loss
             return loss
-            
+
         except Exception as e:
             print(f"Error during training: {str(e)}")
             return mx.array(0.0, dtype=mx.float32)

@@ -103,3 +103,105 @@ help:
 	@echo "  make test        - Run tests"
 	@echo "  make clean       - Remove the virtual environment"
 	@echo "  make help        - Show this help message"
+
+.PHONY: install install-dev test lint format clean build docs
+
+# Python settings
+PYTHON := python3
+VENV := .venv
+PIP := $(VENV)/bin/pip
+
+# Project settings
+PROJECT_NAME := mflux
+TEST_PATH := tests
+SRC_PATH := src/mflux
+
+# Build settings
+DIST_PATH := dist
+BUILD_PATH := build
+
+# Documentation settings
+DOCS_PATH := docs
+DOCS_BUILD := $(DOCS_PATH)/_build
+
+# Virtual environment
+$(VENV)/bin/activate:
+	$(PYTHON) -m venv $(VENV)
+	$(PIP) install --upgrade pip
+	$(PIP) install -e ".[dev]"
+
+# Installation
+install:
+	$(PIP) install -e .
+
+install-dev: $(VENV)/bin/activate
+	$(PIP) install -e ".[dev]"
+	pre-commit install
+
+# Testing
+test:
+	$(PYTHON) -m pytest $(TEST_PATH) -v --cov=$(PROJECT_NAME) --cov-report=term-missing
+
+test-watch:
+	ptw $(TEST_PATH) --onpass "echo 'All tests passed! 🎉'"
+
+# Linting and formatting
+lint:
+	ruff check $(SRC_PATH)
+	ruff format --check $(SRC_PATH)
+
+format:
+	ruff check --fix $(SRC_PATH)
+	ruff format $(SRC_PATH)
+
+# Cleaning
+clean:
+	rm -rf $(DIST_PATH)
+	rm -rf $(BUILD_PATH)
+	rm -rf *.egg-info
+	rm -rf .coverage
+	rm -rf .pytest_cache
+	rm -rf .ruff_cache
+	find . -type d -name "__pycache__" -exec rm -r {} +
+	find . -type f -name "*.pyc" -delete
+
+# Building
+build: clean
+	$(PYTHON) -m build
+
+# Documentation
+docs:
+	$(MAKE) -C $(DOCS_PATH) html
+	@echo "Documentation built in $(DOCS_BUILD)/html"
+
+docs-serve: docs
+	$(PYTHON) -m http.server --directory $(DOCS_BUILD)/html
+
+# Development helpers
+dev-setup: install-dev
+	@echo "Development environment setup complete! 🚀"
+	@echo "Run 'source $(VENV)/bin/activate' to activate the virtual environment"
+
+# MLX specific targets
+mlx-optimize:
+	@echo "Optimizing for MLX..."
+	$(PYTHON) -m $(PROJECT_NAME).tools.optimize_mlx
+
+mlx-benchmark:
+	@echo "Running MLX benchmarks..."
+	$(PYTHON) -m $(PROJECT_NAME).tools.benchmark
+
+# Help
+help:
+	@echo "Available commands:"
+	@echo "  make install      - Install the package"
+	@echo "  make install-dev  - Install development dependencies"
+	@echo "  make test        - Run tests"
+	@echo "  make lint        - Run linting checks"
+	@echo "  make format      - Format code"
+	@echo "  make clean       - Clean build artifacts"
+	@echo "  make build       - Build package"
+	@echo "  make docs        - Build documentation"
+	@echo "  make dev-setup   - Setup development environment"
+	@echo "  make mlx-optimize - Optimize for MLX"
+	@echo "  make help        - Show this help message"
