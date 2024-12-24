@@ -92,3 +92,46 @@ class RuntimeConfig:
         shifted_sigmas = mx.exp(mu) / (mx.exp(mu) + (1 / sigmas - 1))
         shifted_sigmas[-1] = 0
         return shifted_sigmas
+
+
+from dataclasses import dataclass
+
+
+@dataclass
+class RuntimeConfigValidation:
+    """Configuration pour l'exécution du modèle"""
+
+    # Paramètres d'optimisation MLX
+    use_mixed_precision: bool = True  # Utiliser la précision mixte FP16
+    memory_efficient: bool = True  # Utiliser les optimisations mémoire
+    use_metal: bool = True  # Utiliser Metal Performance Shaders
+
+    # Paramètres Adam
+    adam_beta1: float = 0.9
+    adam_beta2: float = 0.999
+    adam_weight_decay: float = 1e-2
+    adam_epsilon: float = 1e-8
+
+    # Paramètres de génération
+    guidance_scale: float = 7.5
+    num_inference_steps: int = 50
+
+    def __post_init__(self):
+        """Validation des paramètres"""
+        if self.guidance_scale <= 0:
+            raise ValueError("L'échelle de guidance doit être positive")
+
+        if self.num_inference_steps <= 0:
+            raise ValueError("Le nombre de pas d'inférence doit être positif")
+
+        if not (0 < self.adam_beta1 < 1):
+            raise ValueError("adam_beta1 doit être entre 0 et 1")
+
+        if not (0 < self.adam_beta2 < 1):
+            raise ValueError("adam_beta2 doit être entre 0 et 1")
+
+        if self.adam_weight_decay < 0:
+            raise ValueError("Le weight decay doit être positif ou nul")
+
+        if self.adam_epsilon <= 0:
+            raise ValueError("adam_epsilon doit être positif")

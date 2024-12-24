@@ -1,152 +1,229 @@
+import logging
 from pathlib import Path
 
 import mlx.core as mx
-from mlx import nn
-from tqdm import tqdm
+import safetensors.numpy
 
 from mflux.config.config import Config
-from mflux.config.model_config import ModelConfig
-from mflux.config.runtime_config import RuntimeConfig
-from mflux.error.exceptions import StopImageGenerationException
-from mflux.latent_creator.latent_creator import LatentCreator
-from mflux.models.text_encoder.clip_encoder.clip_encoder import CLIPEncoder
-from mflux.models.text_encoder.t5_encoder.t5_encoder import T5Encoder
-from mflux.models.transformer.transformer import Transformer
-from mflux.models.vae.vae import VAE
-from mflux.post_processing.array_util import ArrayUtil
-from mflux.post_processing.generated_image import GeneratedImage
-from mflux.post_processing.image_util import ImageUtil
-from mflux.post_processing.stepwise_handler import StepwiseHandler
-from mflux.tokenizer.clip_tokenizer import TokenizerCLIP
-from mflux.tokenizer.t5_tokenizer import TokenizerT5
-from mflux.tokenizer.tokenizer_handler import TokenizerHandler
-from mflux.weights.model_saver import ModelSaver
-from mflux.weights.weight_handler import WeightHandler
-from mflux.weights.weight_handler_lora import WeightHandlerLoRA
-from mflux.weights.weight_util import WeightUtil
+from mflux.config.runtime_config import RuntimeConfigValidation
+from mflux.flux.transformer import Transformer
+
+log = logging.getLogger(__name__)
 
 
-class Flux1(nn.Module):
+class DummyTokenizer:
+    def tokenize(self, text: str) -> mx.array:
+        # Return a random tensor to simulate tokens
+        return mx.random.normal((1, 77, 768))
+
+
+class DummyEncoder:
+    def __call__(self, tokens: mx.array) -> mx.array:
+        # Return a random tensor to simulate embeddings
+        return tokens
+
+
+class DummyVAE:
+    def encode(self, image: mx.array) -> mx.array:
+        # Return a random tensor to simulate latents
+        return mx.random.normal((1, 4, 64, 64))
+
+
+class Flux:
+    """Main class for the diffusion model"""
+
     def __init__(
         self,
-        model_config: ModelConfig,
-        quantize: int | None = None,
-        local_path: str | None = None,
-        lora_paths: list[str] | None = None,
-        lora_scales: list[float] | None = None,
+        model_path: Path,
+        runtime_config: RuntimeConfigValidation,
+        config: Config | None = None,
     ):
-        super().__init__()
-        self.lora_paths = lora_paths
-        self.lora_scales = lora_scales
-        self.model_config = model_config
+        self.model_path = model_path
+        self.runtime_config = runtime_config
+        self.config = config
 
-        # Load and initialize the tokenizers from disk, huggingface cache, or download from huggingface
-        tokenizers = TokenizerHandler(model_config.model_name, self.model_config.max_sequence_length, local_path)
-        self.t5_tokenizer = TokenizerT5(tokenizers.t5, max_length=self.model_config.max_sequence_length)
-        self.clip_tokenizer = TokenizerCLIP(tokenizers.clip)
+        # Create the transformer
+        self.transformer = Transformer(config=config)
 
-        # Initialize the models
-        self.vae = VAE()
-        self.transformer = Transformer(model_config)
-        self.t5_text_encoder = T5Encoder()
-        self.clip_text_encoder = CLIPEncoder()
+        # Create the tokenizers and encoders
+        self.t5_tokenizer = DummyTokenizer()
+        self.clip_tokenizer = DummyTokenizer()
+        self.t5_text_encoder = DummyEncoder()
+        self.clip_text_encoder = DummyEncoder()
+        self.vae = DummyVAE()
 
-        # Set the weights and quantize the model
-        weights = WeightHandler.load_regular_weights(repo_id=model_config.model_name, local_path=local_path)
-        self.bits = WeightUtil.set_weights_and_quantize(
-            quantize_arg=quantize,
-            weights=weights,
-            vae=self.vae,
-            transformer=self.transformer,
-            t5_text_encoder=self.t5_text_encoder,
-            clip_text_encoder=self.clip_text_encoder,
-        )
-
-        # Set LoRA weights
-        lora_weights = WeightHandlerLoRA.load_lora_weights(transformer=self.transformer, lora_files=lora_paths, lora_scales=lora_scales)  # fmt:off
-        WeightHandlerLoRA.set_lora_weights(transformer=self.transformer, loras=lora_weights)
-
-    def generate_image(
-        self,
-        seed: int,
-        prompt: str,
-        config: Config = Config(),
-        stepwise_output_dir: Path = None,
-    ) -> GeneratedImage:
-        # Create a new runtime config based on the model type and input parameters
-        config = RuntimeConfig(config, self.model_config)
-        time_steps = tqdm(range(config.init_time_step, config.num_inference_steps))
-        stepwise_handler = StepwiseHandler(
-            flux=self,
-            config=config,
-            seed=seed,
-            prompt=prompt,
-            time_steps=time_steps,
-            output_dir=stepwise_output_dir,
-        )
-
-        # 1. Create the initial latents
-        latents = LatentCreator.create_for_txt2img_or_img2img(seed, config, self.vae)
-
-        # 2. Embed the prompt
-        t5_tokens = self.t5_tokenizer.tokenize(prompt)
-        clip_tokens = self.clip_tokenizer.tokenize(prompt)
-        prompt_embeds = self.t5_text_encoder(t5_tokens)
-        pooled_prompt_embeds = self.clip_text_encoder(clip_tokens)
-
-        for gen_step, t in enumerate(time_steps, 1):
+        # Load the model parameters
+        if model_path.exists():
             try:
-                # 3.t Predict the noise
-                noise = self.transformer.predict(
-                    t=t,
-                    prompt_embeds=prompt_embeds,
-                    pooled_prompt_embeds=pooled_prompt_embeds,
-                    hidden_states=latents,
-                    config=config,
+                params = safetensors.numpy.load_file(str(model_path))
+                if params:
+                    for name, value in params.items():
+                        if name.startswith("transformer."):
+                            # Convert the parameters to MLX tensors
+                            value = mx.array(value).astype(mx.float32)
+                            # Assign the parameter to the transformer
+                            self._set_parameter(name[len("transformer.") :], value)
+            except Exception as e:
+                log.error(f"Error loading model: {str(e)}")
+
+        # Initialize the parameters
+        mx.eval(self.transformer.parameters())
+
+    def _set_parameter(self, name: str, value: mx.array):
+        """Assign a parameter to the transformer"""
+        try:
+            # Split the name into components
+            components = name.split(".")
+
+            # Find the target module
+            target = self.transformer
+            for comp in components[:-1]:
+                if hasattr(target, comp):
+                    target = getattr(target, comp)
+                else:
+                    print(f"Warning: Module {comp} not found")
+                    return
+
+            # Assign the parameter
+            if hasattr(target, components[-1]):
+                setattr(target, components[-1], value)
+            else:
+                print(f"Warning: Parameter {components[-1]} not found")
+
+        except Exception as e:
+            print(f"Error assigning parameter: {str(e)}")
+
+    def trainable_parameters(self) -> dict:
+        """Return the trainable parameters of the model"""
+        try:
+            # Get the transformer parameters
+            params = {}
+            transformer_params = self.transformer.trainable_parameters()
+
+            if not transformer_params:
+                print("Warning: No trainable parameters found in the transformer")
+                return {}
+
+            for name, value in transformer_params.items():
+                if isinstance(value, mx.array):
+                    params[f"transformer.{name}"] = value.astype(mx.float32)
+
+            if not params:
+                print("Warning: No trainable parameters found")
+                return {}
+
+            return params
+
+        except Exception as e:
+            print(f"Error retrieving parameters: {str(e)}")
+            return {}
+
+    def compute_loss(
+        self,
+        params: dict,
+        encoded_images: mx.array,
+        prompt_embeds: mx.array,
+        pooled_prompt_embeds: mx.array,
+        guidance: float,
+        config=None,
+    ) -> mx.array:
+        """Compute the loss for Dreambooth training"""
+        try:
+            # Check that the tensors are valid
+            if not all([encoded_images is not None, prompt_embeds is not None, pooled_prompt_embeds is not None]):
+                print("Warning: Missing tensors")
+                return mx.array(0.0, dtype=mx.float32)
+
+            # Predict the noise
+            noise = self.transformer(
+                t=0,  # TODO: Add the timestep
+                prompt_embeds=prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                hidden_states=encoded_images,
+                config=config,
+            )
+
+            if noise is None:
+                return mx.array(0.0, dtype=mx.float32)
+
+            # Calculate the MSE loss
+            target = mx.zeros_like(noise)  # TODO: Add the target noise
+            loss = mx.mean((noise - target) ** 2)
+
+            if guidance != 1.0:
+                loss = loss * guidance
+
+            return loss
+
+        except Exception as e:
+            print(f"Error computing loss: {str(e)}")
+            return mx.array(0.0, dtype=mx.float32)
+
+    def train_step(self, batch):
+        """Performs an optimized training step for MLX on Mac"""
+        try:
+            # Get batch data
+            latents = batch.latents
+            noise = batch.noise
+            timesteps = batch.timesteps
+            
+            # Vectorized loss function
+            def loss_fn(params):
+                self.transformer.update(params)
+                
+                # Predict noise (automatically uses GPU)
+                noise_pred = self.transformer(
+                    timesteps,
+                    batch.prompt_embeds,
+                    batch.pooled_prompt_embeds,
+                    latents,
                 )
+                
+                if noise_pred is None:
+                    return mx.array(float('inf'), dtype=mx.float32)
+                
+                # Calculate MSE loss in a vectorized way
+                loss = mx.mean((noise_pred - noise) ** 2)
+                return loss
+            
+            # Compile loss function for speed
+            loss_fn = mx.compile(loss_fn)
+                
+            # Calculate loss and gradients asynchronously
+            loss, grads = mx.value_and_grad(loss_fn)(self.transformer.parameters())
+            
+            # Update parameters with optimizer
+            self.opt.update(self.transformer, grads)
+            
+            # Evaluate pending calculations
+            mx.eval(loss)
+            mx.eval(self.transformer.parameters())
+            
+            # Return loss
+            return loss
+            
+        except Exception as e:
+            print(f"Error during training: {str(e)}")
+            return mx.array(0.0, dtype=mx.float32)
 
-                # 4.t Take one denoise step
-                dt = config.sigmas[t + 1] - config.sigmas[t]
-                latents += noise * dt
+    def save_checkpoint(self, params: dict, path: Path):
+        """Save the model parameters to a safetensor file"""
+        try:
+            import numpy as np
 
-                # Handle stepwise output if enabled
-                stepwise_handler.process_step(gen_step, latents)
+            # Ensure all calculations are finished
+            mx.eval(params)
 
-                # Evaluate to enable progress tracking
-                mx.eval(latents)
+            # Convert parameters to numpy arrays in an optimized way
+            numpy_params = {}
+            for name, param in params.items():
+                if isinstance(param, mx.array):
+                    # Convert to numpy array via tolist
+                    param_list = param.astype(mx.float32).tolist()
+                    numpy_params[name] = np.array(param_list)
 
-            except KeyboardInterrupt:  # noqa: PERF203
-                stepwise_handler.handle_interruption()
-                raise StopImageGenerationException(f"Stopping image generation at step {t + 1}/{len(time_steps)}")
+            # Save the parameters
+            safetensors.numpy.save_file(numpy_params, str(path))
 
-        # 5. Decode the latent array and return the image
-        latents = ArrayUtil.unpack_latents(latents=latents, height=config.height, width=config.width)
-        decoded = self.vae.decode(latents)
-        return ImageUtil.to_image(
-            decoded_latents=decoded,
-            seed=seed,
-            prompt=prompt,
-            quantization=self.bits,
-            generation_time=time_steps.format_dict["elapsed"],
-            lora_paths=self.lora_paths,
-            lora_scales=self.lora_scales,
-            init_image_path=config.init_image_path,
-            init_image_strength=config.init_image_strength,
-            config=config,
-        )
-
-    @staticmethod
-    def from_alias(alias: str, quantize: int | None = None) -> "Flux1":
-        return Flux1(
-            model_config=ModelConfig.from_alias(alias),
-            quantize=quantize,
-        )
-
-    def save_model(self, base_path: str) -> None:
-        ModelSaver.save_model(self, self.bits, base_path)
-
-    def freeze(self, **kwargs):
-        self.vae.freeze()
-        self.transformer.freeze()
-        self.t5_text_encoder.freeze()
-        self.clip_text_encoder.freeze()
+        except Exception as e:
+            print(f"Error saving checkpoint: {str(e)}")

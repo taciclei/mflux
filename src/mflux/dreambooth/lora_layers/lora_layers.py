@@ -1,7 +1,6 @@
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import mlx
 import mlx.core as mx
 from mlx import nn
 from mlx.utils import tree_flatten
@@ -11,7 +10,6 @@ from mflux.dreambooth.state.training_spec import SingleTransformerBlocks, Traini
 from mflux.dreambooth.state.zip_util import ZipUtil
 from mflux.models.transformer.joint_transformer_block import JointTransformerBlock
 from mflux.models.transformer.single_transformer_block import SingleTransformerBlock
-from mflux.post_processing.generated_image import GeneratedImage
 from mflux.weights.weight_handler import MetaData, WeightHandler
 
 if TYPE_CHECKING:
@@ -45,21 +43,21 @@ class LoRALayers:
                 transformer_lora_layers = LoRALayers._construct_layers(
                     blocks=flux.transformer.transformer_blocks,
                     block_spec=training_spec.lora_layers.transformer_blocks,
-                    block_prefix="transformer.transformer_blocks",
+                    block_prefix="transformer_blocks",
                 )
 
             if training_spec.lora_layers.single_transformer_blocks:
                 single_transformer_lora_layers = LoRALayers._construct_layers(
                     blocks=flux.transformer.single_transformer_blocks,
                     block_spec=training_spec.lora_layers.single_transformer_blocks,
-                    block_prefix="transformer.single_transformer_blocks",
+                    block_prefix="single_transformer_blocks",
                 )
 
-            lora_layers = {**transformer_lora_layers, **single_transformer_lora_layers}
+            lora_layers = {"transformer": {**transformer_lora_layers, **single_transformer_lora_layers}}
 
             weights = WeightHandler(
                 meta_data=MetaData(is_mflux=True),
-                transformer=mlx.utils.tree_unflatten(list(lora_layers.items()))['transformer'],
+                transformer=lora_layers["transformer"],
             )  # fmt:off
 
             return LoRALayers(weights=weights)
@@ -77,18 +75,57 @@ class LoRALayers:
             block = blocks[i]
 
             for layer_type in block_spec.layer_types:
-                original_layer = LoRALayers._get_nested_attr(block, layer_type)
-                is_list = isinstance(original_layer, list)
-
-                lora_layer = LoRALinear.from_linear(
-                    linear=original_layer[0] if is_list else original_layer,
-                    r=block_spec.lora_rank,
-                )
-                layer_path = f"{block_prefix}.{i}.{layer_type}"
-
-                lora_layers[layer_path] = [lora_layer] if is_list else lora_layer
+                if layer_type == "attn":
+                    # Handle attention layers
+                    attn = block.attn
+                    for attr in [
+                        "to_q",
+                        "to_k",
+                        "to_v",
+                        "to_out",
+                        "add_q_proj",
+                        "add_k_proj",
+                        "add_v_proj",
+                        "to_add_out",
+                    ]:
+                        if hasattr(attn, attr):
+                            layer = getattr(attn, attr)
+                            if isinstance(layer, list):
+                                layer = layer[0]
+                            if isinstance(layer, nn.Linear):
+                                lora_layer = LoRALinear.from_linear(
+                                    linear=layer,
+                                    r=block_spec.lora_rank,
+                                )
+                                layer_path = f"{block_prefix}.{i}.{layer_type}.{attr}"
+                                lora_layers[layer_path] = lora_layer
+                elif layer_type == "mlp":
+                    # Handle MLP layers
+                    for ff_attr in ["ff", "ff_context"]:
+                        if hasattr(block, ff_attr):
+                            ff = getattr(block, ff_attr)
+                            for mlp_attr in ["linear1", "linear2"]:
+                                if hasattr(ff, mlp_attr):
+                                    layer = getattr(ff, mlp_attr)
+                                    if isinstance(layer, nn.Linear):
+                                        lora_layer = LoRALinear.from_linear(
+                                            linear=layer,
+                                            r=block_spec.lora_rank,
+                                        )
+                                        layer_path = f"{block_prefix}.{i}.{ff_attr}.{mlp_attr}"
+                                        lora_layers[layer_path] = lora_layer
 
         return lora_layers
+
+    @staticmethod
+    def _get_nested_attr(obj, attr):
+        """Get a nested attribute from an object using dot notation."""
+        if "." in attr:
+            parts = attr.split(".")
+            for part in parts[:-1]:
+                obj = getattr(obj, part)
+            return getattr(obj, parts[-1])
+        return getattr(obj, attr)
 
     @staticmethod
     def transformer_dict_from_template(weights: dict, transformer: nn.Module, scale: float) -> dict:
@@ -99,141 +136,29 @@ class LoRALayers:
                 parts = base_path.split(".")
 
                 if parts[1] == "transformer_blocks":
-                    LoRALayers._handle_transformer_blocks(
-                        weights=weights,
-                        scale=scale,
-                        transformer=transformer,
-                        lora_layers=lora_layers,
-                        base_path=base_path,
-                    )
+                    block = transformer.transformer_blocks[int(parts[2])]
+                elif parts[1] == "single_transformer_blocks":
+                    block = transformer.single_transformer_blocks[int(parts[2])]
+                else:
+                    continue
 
-                if parts[1] == "single_transformer_blocks":
-                    LoRALayers._handle_single_transformer_blocks(
-                        weights=weights,
-                        scale=scale,
-                        transformer=transformer,
-                        lora_layers=lora_layers,
-                        base_path=base_path,
-                    )
+                layer = LoRALayers._get_nested_attr(block, ".".join(parts[3:]))
+                if isinstance(layer, list):
+                    layer = layer[0]
+
+                lora_layer = LoRALinear.from_linear(
+                    linear=layer,
+                    r=weights[key].shape[1],
+                )
+                lora_layer.lora_A = weights[key]
+                lora_layer.lora_B = weights[base_path + ".lora_B"]
+                lora_layer.scale = scale
+
+                layer_path = ".".join(parts)
+                lora_layers[layer_path] = [lora_layer] if isinstance(layer, list) else lora_layer
 
         return lora_layers
 
-    @staticmethod
-    def _handle_transformer_blocks(
-        weights: dict, scale: float, transformer: nn.Module, lora_layers: dict, base_path: str
-    ):
-        parts = base_path.split(".")
-        block_idx = int(parts[2])
-        module_name = parts[3]
-        attr_name = parts[4]
-        block = transformer.transformer_blocks[block_idx]
-        module = getattr(block, module_name)
-        original_layer = getattr(module, attr_name)
-
-        if len(parts) == 6:
-            original_layer = original_layer[0]  # Special case here
-
-        # Create LoRA layer
-        lora_A = weights[f"{base_path}.lora_A"]
-        rank = lora_A.shape[1]
-        lora_layer = LoRALinear.from_linear(linear=original_layer, r=rank, scale=scale)
-
-        # Set the weights
-        lora_layer.lora_A = weights[f"{base_path}.lora_A"]
-        lora_layer.lora_B = weights[f"{base_path}.lora_B"]
-
-        # Store the layer
-        lora_layers[base_path] = lora_layer
-
-    @staticmethod
-    def _handle_single_transformer_blocks(
-        weights: dict, scale: float, transformer: nn.Module, lora_layers: dict, base_path: str
-    ):
-        parts = base_path.split(".")
-        block_idx = int(parts[2])
-        module_name = parts[3]
-        if len(parts) == 4:
-            original_layer = getattr(transformer.single_transformer_blocks[block_idx], module_name)
-        elif len(parts) == 5:
-            attr_name = parts[4]
-            block = transformer.single_transformer_blocks[block_idx]
-            module = getattr(block, module_name)
-            original_layer = getattr(module, attr_name)
-
-        # Create LoRA layer
-        lora_A = weights[f"{base_path}.lora_A"]
-        rank = lora_A.shape[1]
-        lora_layer = LoRALinear.from_linear(linear=original_layer, r=rank, scale=scale)
-
-        # Set the weights
-        lora_layer.lora_A = weights[f"{base_path}.lora_A"]
-        lora_layer.lora_B = weights[f"{base_path}.lora_B"]
-
-        # Store the layer
-        lora_layers[base_path] = lora_layer
-
-    @staticmethod
-    def set_transformer_block(transformer_block, dictionary: dict):
-        for key, val in dictionary.items():
-            if key == "attn":
-                LoRALayers._set_attribute(transformer_block, key, val, "to_q")
-                LoRALayers._set_attribute(transformer_block, key, val, "to_k")
-                LoRALayers._set_attribute(transformer_block, key, val, "to_v")
-                LoRALayers._set_attribute(transformer_block, key, val, "to_out")
-                LoRALayers._set_attribute(transformer_block, key, val, "add_q_proj")
-                LoRALayers._set_attribute(transformer_block, key, val, "add_k_proj")
-                LoRALayers._set_attribute(transformer_block, key, val, "add_v_proj")
-                LoRALayers._set_attribute(transformer_block, key, val, "to_add_out")
-            elif key == "ff" or key == "ff_context":
-                LoRALayers._set_attribute(transformer_block, key, val, "linear1")
-                LoRALayers._set_attribute(transformer_block, key, val, "linear2")
-            elif key == "norm1" or key == "norm1_context":
-                LoRALayers._set_attribute(transformer_block, key, val, "linear")
-            else:
-                raise Exception("Could not set LoRA weights")
-
-    @staticmethod
-    def set_single_transformer_block(single_transformer_block, dictionary: dict):
-        for key, val in dictionary.items():
-            if key == "attn":
-                LoRALayers._set_attribute(single_transformer_block, key, val, "to_q")
-                LoRALayers._set_attribute(single_transformer_block, key, val, "to_k")
-                LoRALayers._set_attribute(single_transformer_block, key, val, "to_v")
-            elif key == "norm":
-                LoRALayers._set_attribute(single_transformer_block, key, val, "linear")
-            elif key == "proj_mlp" or key == "proj_out":
-                single_transformer_block[key] = val
-            else:
-                raise Exception("Could not set LoRA weights")
-
-    @staticmethod
-    def _set_attribute(block, key: str, val: dict, name: str):
-        if block[key].get(name, False) and val.get(name, False):
-            block[key][name] = val[name]
-
-    @staticmethod
-    def _get_nested_attr(obj, attr_path):
-        attrs = attr_path.split(".")
-        for attr in attrs:
-            obj = getattr(obj, attr)
-        return obj
-
-    def save(self, path: Path, training_spec: TrainingSpec) -> None:
-        weights = {}
-        for entry in tree_flatten(self.layers.transformer):
-            name = entry[0]
-            weight = entry[1]
-            if name.endswith(".lora_A") or name.endswith(".lora_B"):
-                weights[name] = weight
-
-        weights = {key: mx.transpose(val) for key, val in weights.items()}
-        weights = {"transformer": weights}
-        mx.save_safetensors(
-            str(path),
-            dict(tree_flatten(weights)),
-            metadata={
-                "mflux_version": GeneratedImage.get_version(),
-                "transformer_blocks": str(training_spec.lora_layers.transformer_blocks),
-                "single_transformer_blocks": str(training_spec.lora_layers.single_transformer_blocks),
-            },
-        )
+    def save(self, path: Path) -> None:
+        state = tree_flatten(self.layers.transformer)
+        mx.save_safetensors(str(path), dict(state))

@@ -46,6 +46,10 @@ class Optimizer:
         # noinspection PyCallingNonCallable
         opt = opt(learning_rate=training_spec.optimizer.learning_rate)
 
+        # Initialize optimizer state with dummy parameters
+        dummy_params = {"dummy": mx.zeros((1,))}
+        opt.init(dummy_params)
+
         # Load from state if present in the spec
         if training_spec.optimizer.state_path is not None:
             state = ZipUtil.unzip(
